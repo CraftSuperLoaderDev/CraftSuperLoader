@@ -1,0 +1,615 @@
+--- a/net/minecraft/server/World.java
++++ b/net/minecraft/server/World.java
+@@ -14,6 +14,21 @@
+ import java.util.function.Supplier;
+ import javax.annotation.Nullable;
+ 
++// CraftBukkit start
++import com.google.common.collect.Maps;
++import java.util.Map;
++import org.bukkit.Bukkit;
++import org.bukkit.block.BlockState;
++import org.bukkit.craftbukkit.CraftServer;
++import org.bukkit.craftbukkit.CraftWorld;
++import org.bukkit.craftbukkit.event.CraftEventFactory;
++import org.bukkit.craftbukkit.util.CraftMagicNumbers;
++import org.bukkit.event.block.BlockCanBuildEvent;
++import org.bukkit.event.block.BlockPhysicsEvent;
++import org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason;
++import org.bukkit.generator.ChunkGenerator;
++// CraftBukkit end
++
+ public abstract class World implements IBlockAccess {
+ 
+     private int a = 63;
+@@ -59,7 +74,52 @@
+     private final WorldBorder P;
+     int[] J;
+ 
+-    protected World(IDataManager idatamanager, WorldData worlddata, WorldProvider worldprovider, MethodProfiler methodprofiler, boolean flag) {
++    // CraftBukkit start Added the following
++    private final CraftWorld world;
++    public boolean pvpMode;
++    public boolean keepSpawnInMemory = true;
++    public ChunkGenerator generator;
++
++    public boolean captureBlockStates = false;
++    public boolean captureTreeGeneration = false;
++    public ArrayList<BlockState> capturedBlockStates= new ArrayList<BlockState>(){
++        @Override
++        public boolean add( BlockState blockState ) {
++            Iterator<BlockState> blockStateIterator = this.iterator();
++            while( blockStateIterator.hasNext() ) {
++                BlockState blockState1 = blockStateIterator.next();
++                if ( blockState1.getLocation().equals( blockState.getLocation() ) ) {
++                    return false;
++                }
++            }
++
++            return super.add( blockState );
++        }
++    };
++    public List<EntityItem> captureDrops;
++    public long ticksPerAnimalSpawns;
++    public long ticksPerMonsterSpawns;
++    public boolean populating;
++    private int tickPosition;
++
++    public CraftWorld getWorld() {
++        return this.world;
++    }
++
++    public CraftServer getServer() {
++        return (CraftServer) Bukkit.getServer();
++    }
++
++    public Chunk getChunkIfLoaded(int x, int z) {
++        return ((ChunkProviderServer) this.chunkProvider).getChunkIfLoaded(x, z);
++    }
++
++    protected World(IDataManager idatamanager, WorldData worlddata, WorldProvider worldprovider, MethodProfiler methodprofiler, boolean flag, ChunkGenerator gen, org.bukkit.World.Environment env) {
++        this.generator = gen;
++        this.world = new CraftWorld((WorldServer) this, gen, env);
++        this.ticksPerAnimalSpawns = this.getServer().getTicksPerAnimalSpawns(); // CraftBukkit
++        this.ticksPerMonsterSpawns = this.getServer().getTicksPerMonsterSpawns(); // CraftBukkit
++        // CraftBukkit end
+         this.u = Lists.newArrayList(new IWorldAccess[] { this.t});
+         this.N = Calendar.getInstance();
+         this.scoreboard = new Scoreboard();
+@@ -72,6 +132,36 @@
+         this.worldProvider = worldprovider;
+         this.isClientSide = flag;
+         this.P = worldprovider.getWorldBorder();
++        // CraftBukkit start
++        getWorldBorder().world = (WorldServer) this;
++        // From PlayerList.setPlayerFileData
++        getWorldBorder().a(new IWorldBorderListener() {
++            public void a(WorldBorder worldborder, double d0) {
++                getServer().getHandle().sendAll(new PacketPlayOutWorldBorder(worldborder, PacketPlayOutWorldBorder.EnumWorldBorderAction.SET_SIZE), worldborder.world);
++            }
++
++            public void a(WorldBorder worldborder, double d0, double d1, long i) {
++                getServer().getHandle().sendAll(new PacketPlayOutWorldBorder(worldborder, PacketPlayOutWorldBorder.EnumWorldBorderAction.LERP_SIZE), worldborder.world);
++            }
++
++            public void a(WorldBorder worldborder, double d0, double d1) {
++                getServer().getHandle().sendAll(new PacketPlayOutWorldBorder(worldborder, PacketPlayOutWorldBorder.EnumWorldBorderAction.SET_CENTER), worldborder.world);
++            }
++
++            public void a(WorldBorder worldborder, int i) {
++                getServer().getHandle().sendAll(new PacketPlayOutWorldBorder(worldborder, PacketPlayOutWorldBorder.EnumWorldBorderAction.SET_WARNING_TIME), worldborder.world);
++            }
++
++            public void b(WorldBorder worldborder, int i) {
++                getServer().getHandle().sendAll(new PacketPlayOutWorldBorder(worldborder, PacketPlayOutWorldBorder.EnumWorldBorderAction.SET_WARNING_BLOCKS), worldborder.world);
++            }
++
++            public void b(WorldBorder worldborder, double d0) {}
++
++            public void c(WorldBorder worldborder, double d0) {}
++        });
++        this.getServer().addWorld(this.world);
++        // CraftBukkit end
+     }
+ 
+     public World b() {
+@@ -209,6 +299,27 @@
+     }
+ 
+     public boolean setTypeAndData(BlockPosition blockposition, IBlockData iblockdata, int i) {
++        // CraftBukkit start - tree generation
++        if (this.captureTreeGeneration) {
++            BlockState blockstate = null;
++            Iterator<BlockState> it = capturedBlockStates.iterator();
++            while (it.hasNext()) {
++                BlockState previous = it.next();
++                if (previous.getX() == blockposition.getX() && previous.getY() == blockposition.getY() && previous.getZ() == blockposition.getZ()) {
++                    blockstate = previous;
++                    it.remove();
++                    break;
++                }
++            }
++            if (blockstate == null) {
++                blockstate = org.bukkit.craftbukkit.block.CraftBlockState.getBlockState(this, blockposition.getX(), blockposition.getY(), blockposition.getZ(), i);
++            }
++            blockstate.setTypeId(CraftMagicNumbers.getId(iblockdata.getBlock()));
++            blockstate.setRawData((byte) iblockdata.getBlock().toLegacyData(iblockdata));
++            this.capturedBlockStates.add(blockstate);
++            return true;
++        }
++        // CraftBukkit end
+         if (this.E(blockposition)) {
+             return false;
+         } else if (!this.isClientSide && this.worldData.getType() == WorldType.DEBUG_ALL_BLOCK_STATES) {
+@@ -216,9 +327,23 @@
+         } else {
+             Chunk chunk = this.getChunkAtWorldCoords(blockposition);
+             Block block = iblockdata.getBlock();
++
++            // CraftBukkit start - capture blockstates
++            BlockState blockstate = null;
++            if (this.captureBlockStates) {
++                blockstate = org.bukkit.craftbukkit.block.CraftBlockState.getBlockState(this, blockposition.getX(), blockposition.getY(), blockposition.getZ(), i);
++                this.capturedBlockStates.add(blockstate);
++            }
++            // CraftBukkit end
++
+             IBlockData iblockdata1 = chunk.a(blockposition, iblockdata);
+ 
+             if (iblockdata1 == null) {
++                // CraftBukkit start - remove blockstate if failed
++                if (this.captureBlockStates) {
++                    this.capturedBlockStates.remove(blockstate);
++                }
++                // CraftBukkit end
+                 return false;
+             } else {
+                 if (iblockdata.c() != iblockdata1.c() || iblockdata.d() != iblockdata1.d()) {
+@@ -227,6 +352,7 @@
+                     this.methodProfiler.b();
+                 }
+ 
++                /*
+                 if ((i & 2) != 0 && (!this.isClientSide || (i & 4) == 0) && chunk.isReady()) {
+                     this.notify(blockposition, iblockdata1, iblockdata, i);
+                 }
+@@ -239,12 +365,37 @@
+                 } else if (!this.isClientSide && (i & 16) == 0) {
+                     this.c(blockposition, block);
+                 }
++                */
++
++                // CraftBukkit start
++                if (!this.captureBlockStates) { // Don't notify clients or update physics while capturing blockstates
++                    // Modularize client and physic updates
++                    notifyAndUpdatePhysics(blockposition, chunk, iblockdata1, iblockdata, i);
++                }
++                // CraftBukkit end
+ 
+                 return true;
+             }
+         }
+     }
+ 
++    // CraftBukkit start - Split off from above in order to directly send client and physic updates
++    public void notifyAndUpdatePhysics(BlockPosition blockposition, Chunk chunk, IBlockData oldBlock, IBlockData newBlock, int i) {
++        if ((i & 2) != 0 && (!this.isClientSide || (i & 4) == 0) && (chunk == null || chunk.isReady())) { // allow chunk to be null here as chunk.isReady() is false when we send our notification during block placement
++            this.notify(blockposition, oldBlock, newBlock, i);
++        }
++
++        if (!this.isClientSide && (i & 1) != 0) {
++            this.update(blockposition, oldBlock.getBlock(), true);
++            if (newBlock.n()) {
++                this.updateAdjacentComparators(blockposition, newBlock.getBlock());
++            }
++        } else if (!this.isClientSide && (i & 16) == 0) {
++            this.c(blockposition, newBlock.getBlock());
++        }
++    }
++    // CraftBukkit end
++
+     public boolean setAir(BlockPosition blockposition) {
+         return this.setTypeAndData(blockposition, Blocks.AIR.getBlockData(), 3);
+     }
+@@ -278,6 +429,11 @@
+ 
+     public void update(BlockPosition blockposition, Block block, boolean flag) {
+         if (this.worldData.getType() != WorldType.DEBUG_ALL_BLOCK_STATES) {
++            // CraftBukkit start
++            if (populating) {
++                return;
++            }
++            // CraftBukkit end
+             this.applyPhysics(blockposition, block, flag);
+         }
+ 
+@@ -366,6 +522,17 @@
+             IBlockData iblockdata = this.getType(blockposition);
+ 
+             try {
++                // CraftBukkit start
++                CraftWorld world = ((WorldServer) this).getWorld();
++                if (world != null) {
++                    BlockPhysicsEvent event = new BlockPhysicsEvent(world.getBlockAt(blockposition.getX(), blockposition.getY(), blockposition.getZ()), CraftMagicNumbers.getId(block));
++                    this.getServer().getPluginManager().callEvent(event);
++
++                    if (event.isCancelled()) {
++                        return;
++                    }
++                }
++                // CraftBukkit end
+                 iblockdata.doPhysics(this, blockposition, block, blockposition1);
+             } catch (Throwable throwable) {
+                 CrashReport crashreport = CrashReport.a(throwable, "Exception while updating neighbours");
+@@ -583,6 +750,17 @@
+     }
+ 
+     public IBlockData getType(BlockPosition blockposition) {
++        // CraftBukkit start - tree generation
++        if (captureTreeGeneration) {
++            Iterator<BlockState> it = capturedBlockStates.iterator();
++            while (it.hasNext()) {
++                BlockState previous = it.next();
++                if (previous.getX() == blockposition.getX() && previous.getY() == blockposition.getY() && previous.getZ() == blockposition.getZ()) {
++                    return CraftMagicNumbers.getBlock(previous.getTypeId()).fromLegacyData(previous.getRawData());
++                }
++            }
++        }
++        // CraftBukkit end
+         if (this.E(blockposition)) {
+             return Blocks.AIR.getBlockData();
+         } else {
+@@ -788,6 +966,42 @@
+     }
+ 
+     public boolean addEntity(Entity entity) {
++        // CraftBukkit start - Used for entities other than creatures
++        return addEntity(entity, SpawnReason.DEFAULT);
++    }
++
++    public boolean addEntity(Entity entity, SpawnReason spawnReason) { // Changed signature, added SpawnReason
++        if (entity == null) return false;
++
++        org.bukkit.event.Cancellable event = null;
++        if (entity instanceof EntityLiving && !(entity instanceof EntityPlayer)) {
++            boolean isAnimal = entity instanceof EntityAnimal || entity instanceof EntityWaterAnimal || entity instanceof EntityGolem;
++            boolean isMonster = entity instanceof EntityMonster || entity instanceof EntityGhast || entity instanceof EntitySlime;
++            boolean isNpc = entity instanceof NPC;
++
++            if (spawnReason != SpawnReason.CUSTOM) {
++                if (isAnimal && !allowAnimals || isMonster && !allowMonsters || isNpc && !getServer().getServer().getSpawnNPCs()) {
++                    entity.dead = true;
++                    return false;
++                }
++            }
++
++            event = CraftEventFactory.callCreatureSpawnEvent((EntityLiving) entity, spawnReason);
++        } else if (entity instanceof EntityItem) {
++            event = CraftEventFactory.callItemSpawnEvent((EntityItem) entity);
++        } else if (entity.getBukkitEntity() instanceof org.bukkit.entity.Projectile) {
++            // Not all projectiles extend EntityProjectile, so check for Bukkit interface instead
++            event = CraftEventFactory.callProjectileLaunchEvent(entity);
++        } else if (entity.getBukkitEntity() instanceof org.bukkit.entity.Vehicle){
++            event = CraftEventFactory.callVehicleCreateEvent(entity);
++        }
++
++        if (event != null && (event.isCancelled() || entity.dead)) {
++            entity.dead = true;
++            return false;
++        }
++        // CraftBukkit end
++
+         int i = MathHelper.floor(entity.locX / 16.0D);
+         int j = MathHelper.floor(entity.locZ / 16.0D);
+         boolean flag = entity.attachedToPlayer;
+@@ -818,6 +1032,7 @@
+             ((IWorldAccess) this.u.get(i)).a(entity);
+         }
+ 
++        entity.valid = true; // CraftBukkit
+     }
+ 
+     protected void c(Entity entity) {
+@@ -825,6 +1040,7 @@
+             ((IWorldAccess) this.u.get(i)).b(entity);
+         }
+ 
++        entity.valid = false; // CraftBukkit
+     }
+ 
+     public void kill(Entity entity) {
+@@ -860,7 +1076,15 @@
+             this.getChunkAt(i, j).b(entity);
+         }
+ 
+-        this.entityList.remove(entity);
++        // CraftBukkit start - Decrement loop variable field if we've already ticked this entity
++        int index = this.entityList.indexOf(entity);
++        if (index != -1) {
++            if (index <= this.tickPosition) {
++                this.tickPosition--;
++            }
++            this.entityList.remove(index);
++        }
++        // CraftBukkit end
+         this.c(entity);
+     }
+ 
+@@ -977,7 +1201,7 @@
+     }
+ 
+     public boolean a(AxisAlignedBB axisalignedbb) {
+-        return this.a((Entity) null, axisalignedbb, true, Lists.newArrayList());
++        return this.a((Entity) null, axisalignedbb, true, Lists.<AxisAlignedBB>newArrayList()); // CraftBukkit - decompile error
+     }
+ 
+     public int a(float f) {
+@@ -1047,6 +1271,11 @@
+ 
+         for (i = 0; i < this.j.size(); ++i) {
+             entity = (Entity) this.j.get(i);
++            // CraftBukkit start - Fixed an NPE
++            if (entity == null) {
++                continue;
++            }
++            // CraftBukkit end
+ 
+             try {
+                 ++entity.ticksLived;
+@@ -1095,8 +1324,10 @@
+         CrashReportSystemDetails crashreportsystemdetails1;
+         CrashReport crashreport1;
+ 
+-        for (i = 0; i < this.entityList.size(); ++i) {
+-            entity = (Entity) this.entityList.get(i);
++        // CraftBukkit start - Use field for loop variable
++        for (this.tickPosition = 0; this.tickPosition < this.entityList.size(); ++this.tickPosition) {
++            entity = (Entity) this.entityList.get(this.tickPosition);
++            // CraftBukkit end
+             Entity entity1 = entity.bJ();
+ 
+             if (entity1 != null) {
+@@ -1129,7 +1360,7 @@
+                     this.getChunkAt(j, l).b(entity);
+                 }
+ 
+-                this.entityList.remove(i--);
++                this.entityList.remove(this.tickPosition--); // CraftBukkit - Use field for loop variable
+                 this.c(entity);
+             }
+ 
+@@ -1184,9 +1415,11 @@
+                 TileEntity tileentity1 = (TileEntity) this.b.get(i1);
+ 
+                 if (!tileentity1.y()) {
++                    /* CraftBukkit start - Order matters, moved down
+                     if (!this.tileEntityList.contains(tileentity1)) {
+                         this.a(tileentity1);
+                     }
++                    // CraftBukkit end */
+ 
+                     if (this.isLoaded(tileentity1.getPosition())) {
+                         Chunk chunk = this.getChunkAtWorldCoords(tileentity1.getPosition());
+@@ -1194,6 +1427,12 @@
+ 
+                         chunk.a(tileentity1.getPosition(), tileentity1);
+                         this.notify(tileentity1.getPosition(), iblockdata, iblockdata, 3);
++                        // CraftBukkit start
++                        // From above, don't screw this up - SPIGOT-1746
++                        if (!this.tileEntityList.contains(tileentity1)) {
++                            this.a(tileentity1);
++                        }
++                        // CraftBukkit end
+                     }
+                 }
+             }
+@@ -1247,15 +1486,13 @@
+         int i;
+         int j;
+ 
+-        if (!(entity instanceof EntityHuman)) {
+-            i = MathHelper.floor(entity.locX);
+-            j = MathHelper.floor(entity.locZ);
+-            boolean flag1 = true;
+-
+-            if (flag && !this.isAreaLoaded(i - 32, 0, j - 32, i + 32, 0, j + 32, true)) {
+-                return;
+-            }
++        // CraftBukkit start - check if chunks are loaded as done in previous versions
++        // TODO: Go back to Vanilla behaviour when comfortable
++        Chunk startingChunk = this.getChunkIfLoaded(MathHelper.floor(entity.locX) >> 4, MathHelper.floor(entity.locZ) >> 4);
++        if (flag && !(startingChunk != null && startingChunk.areNeighborsLoaded(2))) {
++            return;
+         }
++        // CraftBukkit end
+ 
+         entity.M = entity.locX;
+         entity.N = entity.locY;
+@@ -1268,6 +1505,7 @@
+                 entity.aE();
+             } else {
+                 entity.B_();
++                entity.postTick(); // CraftBukkit
+             }
+         }
+ 
+@@ -1559,11 +1797,18 @@
+         }
+     }
+ 
++    public Map<BlockPosition, TileEntity> capturedTileEntities = Maps.newHashMap();
+     @Nullable
+     public TileEntity getTileEntity(BlockPosition blockposition) {
+         if (this.E(blockposition)) {
+             return null;
+         } else {
++            // CraftBukkit start
++            if (capturedTileEntities.containsKey(blockposition)) {
++                return capturedTileEntities.get(blockposition);
++            }
++            // CraftBukkit end
++
+             TileEntity tileentity = null;
+ 
+             if (this.O) {
+@@ -1598,6 +1843,14 @@
+     public void setTileEntity(BlockPosition blockposition, @Nullable TileEntity tileentity) {
+         if (!this.E(blockposition)) {
+             if (tileentity != null && !tileentity.y()) {
++            // CraftBukkit start
++            if (captureBlockStates) {
++                tileentity.a(this);
++                tileentity.setPosition(blockposition);
++                capturedTileEntities.put(blockposition, tileentity);
++                return;
++            }
++            // CraftBukkit end
+                 if (this.O) {
+                     tileentity.setPosition(blockposition);
+                     Iterator iterator = this.b.iterator();
+@@ -1757,6 +2010,14 @@
+                 }
+ 
+                 this.o = MathHelper.a(this.o, 0.0F, 1.0F);
++
++                // CraftBukkit start
++                for (int idx = 0; idx < this.players.size(); ++idx) {
++                    if (((EntityPlayer) this.players.get(idx)).world == this) {
++                        ((EntityPlayer) this.players.get(idx)).tickWeather();
++                    }
++                }
++                // CraftBukkit end
+             }
+         }
+     }
+@@ -1894,7 +2155,10 @@
+     }
+ 
+     public boolean c(EnumSkyBlock enumskyblock, BlockPosition blockposition) {
+-        if (!this.areChunksLoaded(blockposition, 17, false)) {
++        // CraftBukkit start - Use neighbor cache instead of looking up
++        Chunk chunk = this.getChunkIfLoaded(blockposition.getX() >> 4, blockposition.getZ() >> 4);
++        if (chunk == null || !chunk.areNeighborsLoaded(1) /*!this.areChunksLoaded(blockposition, 17, false)*/) {
++            // CraftBukkit end
+             return false;
+         } else {
+             int i = 0;
+@@ -2061,7 +2325,7 @@
+         while (iterator.hasNext()) {
+             Entity entity = (Entity) iterator.next();
+ 
+-            if (oclass.isAssignableFrom(entity.getClass()) && predicate.apply(entity)) {
++            if (oclass.isAssignableFrom(entity.getClass()) && predicate.apply((T) entity)) {
+                 arraylist.add(entity);
+             }
+         }
+@@ -2076,7 +2340,7 @@
+         while (iterator.hasNext()) {
+             Entity entity = (Entity) iterator.next();
+ 
+-            if (oclass.isAssignableFrom(entity.getClass()) && predicate.apply(entity)) {
++            if (oclass.isAssignableFrom(entity.getClass()) && predicate.apply((T) entity)) { // CraftBukkit - fix decompile error
+                 arraylist.add(entity);
+             }
+         }
+@@ -2125,7 +2389,7 @@
+             }
+         }
+ 
+-        return entity;
++        return (T) entity; // CraftBukkit fix decompile error
+     }
+ 
+     @Nullable
+@@ -2146,8 +2410,17 @@
+ 
+         while (iterator.hasNext()) {
+             Entity entity = (Entity) iterator.next();
++            // CraftBukkit start - Split out persistent check, don't apply it to special persistent mobs
++            if (entity instanceof EntityInsentient) {
++                EntityInsentient entityinsentient = (EntityInsentient) entity;
++                if (entityinsentient.isTypeNotPersistent() && entityinsentient.isPersistent()) {
++                    continue;
++                }
++            }
+ 
+-            if ((!(entity instanceof EntityInsentient) || !((EntityInsentient) entity).isPersistent()) && oclass.isAssignableFrom(entity.getClass())) {
++            if (oclass.isAssignableFrom(entity.getClass())) {
++            // if ((!(entity instanceof EntityInsentient) || !((EntityInsentient) entity).isPersistent()) && oclass.isAssignableFrom(entity.getClass())) {
++                // CraftBukkit end
+                 ++i;
+             }
+         }
+@@ -2156,12 +2429,18 @@
+     }
+ 
+     public void a(Collection<Entity> collection) {
+-        this.entityList.addAll(collection);
++        // CraftBukkit start
++        // this.entityList.addAll(collection);
+         Iterator iterator = collection.iterator();
+ 
+         while (iterator.hasNext()) {
+             Entity entity = (Entity) iterator.next();
+ 
++            if (entity == null) {
++                continue;
++            }
++            this.entityList.add(entity);
++            // CraftBukkit end
+             this.b(entity);
+         }
+ 
+@@ -2175,7 +2454,13 @@
+         IBlockData iblockdata = this.getType(blockposition);
+         AxisAlignedBB axisalignedbb = flag ? null : block.getBlockData().d(this, blockposition);
+ 
+-        return axisalignedbb != Block.k && !this.a(axisalignedbb.a(blockposition), entity) ? false : (iblockdata.getMaterial() == Material.ORIENTABLE && block == Blocks.ANVIL ? true : iblockdata.getMaterial().isReplaceable() && block.canPlace(this, blockposition, enumdirection));
++        // CraftBukkit start - store default return
++        boolean defaultReturn = axisalignedbb != Block.k && !this.a(axisalignedbb.a(blockposition), entity) ? false : (iblockdata.getMaterial() == Material.ORIENTABLE && block == Blocks.ANVIL ? true : iblockdata.getMaterial().isReplaceable() && block.canPlace(this, blockposition, enumdirection));
++        BlockCanBuildEvent event = new BlockCanBuildEvent(this.getWorld().getBlockAt(blockposition.getX(), blockposition.getY(), blockposition.getZ()), CraftMagicNumbers.getId(block), defaultReturn);
++        this.getServer().getPluginManager().callEvent(event);
++
++        return event.isBuildable();
++        // CraftBukkit end
+     }
+ 
+     public int getSeaLevel() {
+@@ -2285,6 +2570,11 @@
+ 
+         for (int i = 0; i < this.players.size(); ++i) {
+             EntityHuman entityhuman1 = (EntityHuman) this.players.get(i);
++            // CraftBukkit start - Fixed an NPE
++            if (entityhuman1 == null || entityhuman1.dead) {
++                continue;
++            }
++            // CraftBukkit end
+ 
+             if (predicate.apply(entityhuman1)) {
+                 double d5 = entityhuman1.d(d0, d1, d2);
+@@ -2453,6 +2743,16 @@
+ 
+     public void everyoneSleeping() {}
+ 
++    // CraftBukkit start
++    // Calls the method that checks to see if players are sleeping
++    // Called by CraftPlayer.setPermanentSleeping()
++    public void checkSleepStatus() {
++        if (!this.isClientSide) {
++            this.everyoneSleeping();
++        }
++    }
++    // CraftBukkit end
++
+     public float h(float f) {
+         return (this.p + (this.q - this.p) * f) * this.j(f);
+     }
+@@ -2670,7 +2970,7 @@
+         int l = j * 16 + 8 - blockposition.getZ();
+         boolean flag = true;
+ 
+-        return k >= -128 && k <= 128 && l >= -128 && l <= 128;
++        return k >= -128 && k <= 128 && l >= -128 && l <= 128 && this.keepSpawnInMemory; // CraftBukkit - Added 'this.keepSpawnInMemory'
+     }
+ 
+     public void a(Packet<?> packet) {
