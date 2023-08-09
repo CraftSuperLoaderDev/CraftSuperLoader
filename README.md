@@ -1,4 +1,4 @@
-Spigot
+CraftSuperLoader
 ======
 
 High performance Minecraft server implementation
@@ -7,36 +7,7 @@ High performance Minecraft server implementation
 How To
 -----------
 
-Init a Craftbukkit and Bukkit module : `git submodule update --init`
-
-Apply Patches : `./applyPatches.sh`
-
-### Create patch for server ###
-
-`cd Spigot-Server`
-
-Add your file for commit : `git add <file>`
-
-Commit : `git commit -m <msg>`
-
-`cd ..`
-
-Create Patch `./rebuildPatches.sh`
-
-### Create patch for API ###
-
-`cd Spigot-API`
-
-Add your file for commit : `git add <file>`
-
-Commit : `git commit -m <msg>`
-
-`cd ..`
-
-Create Patch `./rebuildPatches.sh`
-
-
-
+Use IntelliJ IDEA open this project
 
 Compilation
 -----------
