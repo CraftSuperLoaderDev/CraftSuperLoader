@@ -1,0 +1,85 @@
+--- a/net/minecraft/server/MobEffectList.java
++++ b/net/minecraft/server/MobEffectList.java
+@@ -7,6 +7,11 @@
+ import java.util.Map.Entry;
+ import javax.annotation.Nullable;
+ 
++// CraftBukkit start
++import org.bukkit.craftbukkit.event.CraftEventFactory;
++import org.bukkit.event.entity.EntityRegainHealthEvent.RegainReason;
++// CraftBukkit end
++
+ public class MobEffectList {
+ 
+     public static final RegistryMaterials<MinecraftKey, MobEffectList> REGISTRY = new RegistryMaterials();
+@@ -24,7 +29,7 @@
+     }
+ 
+     public static int getId(MobEffectList mobeffectlist) {
+-        return MobEffectList.REGISTRY.a((Object) mobeffectlist);
++        return MobEffectList.REGISTRY.a(mobeffectlist); // CraftBukkit - decompile error
+     }
+ 
+     @Nullable
+@@ -51,11 +56,11 @@
+     public void tick(EntityLiving entityliving, int i) {
+         if (this == MobEffects.REGENERATION) {
+             if (entityliving.getHealth() < entityliving.getMaxHealth()) {
+-                entityliving.heal(1.0F);
++                entityliving.heal(1.0F, RegainReason.MAGIC_REGEN); // CraftBukkit
+             }
+         } else if (this == MobEffects.POISON) {
+             if (entityliving.getHealth() > 1.0F) {
+-                entityliving.damageEntity(DamageSource.MAGIC, 1.0F);
++                entityliving.damageEntity(CraftEventFactory.POISON, 1.0F);  // CraftBukkit - DamageSource.MAGIC -> CraftEventFactory.POISON
+             }
+         } else if (this == MobEffects.WITHER) {
+             entityliving.damageEntity(DamageSource.WITHER, 1.0F);
+@@ -63,14 +68,25 @@
+             ((EntityHuman) entityliving).applyExhaustion(0.005F * (float) (i + 1));
+         } else if (this == MobEffects.SATURATION && entityliving instanceof EntityHuman) {
+             if (!entityliving.world.isClientSide) {
+-                ((EntityHuman) entityliving).getFoodData().eat(i + 1, 1.0F);
++                // CraftBukkit start
++                EntityHuman entityhuman = (EntityHuman) entityliving;
++                int oldFoodLevel = entityhuman.getFoodData().foodLevel;
++
++                org.bukkit.event.entity.FoodLevelChangeEvent event = CraftEventFactory.callFoodLevelChangeEvent(entityhuman, i + 1 + oldFoodLevel);
++
++                if (!event.isCancelled()) {
++                    entityhuman.getFoodData().eat(event.getFoodLevel() - oldFoodLevel, 1.0F);
++                }
++
++                ((EntityPlayer) entityhuman).playerConnection.sendPacket(new PacketPlayOutUpdateHealth(((EntityPlayer) entityhuman).getBukkitEntity().getScaledHealth(), entityhuman.getFoodData().foodLevel, entityhuman.getFoodData().saturationLevel));
++                // CraftBukkit end
+             }
+         } else if ((this != MobEffects.HEAL || entityliving.cc()) && (this != MobEffects.HARM || !entityliving.cc())) {
+             if (this == MobEffects.HARM && !entityliving.cc() || this == MobEffects.HEAL && entityliving.cc()) {
+                 entityliving.damageEntity(DamageSource.MAGIC, (float) (6 << i));
+             }
+         } else {
+-            entityliving.heal((float) Math.max(4 << i, 0));
++            entityliving.heal((float) Math.max(4 << i, 0), RegainReason.MAGIC); // CraftBukkit
+         }
+ 
+     }
+@@ -89,7 +105,7 @@
+             }
+         } else {
+             j = (int) (d0 * (double) (4 << i) + 0.5D);
+-            entityliving.heal((float) j);
++            entityliving.heal((float) j, RegainReason.MAGIC); // CraftBukkit
+         }
+ 
+     }
+@@ -208,5 +224,10 @@
+         MobEffectList.REGISTRY.a(25, new MinecraftKey("levitation"), (new MobEffectList(true, 13565951)).c("effect.levitation").b(3, 2));
+         MobEffectList.REGISTRY.a(26, new MinecraftKey("luck"), (new MobEffectList(false, 3381504)).c("effect.luck").b(5, 2).j().a(GenericAttributes.j, "03C3C89D-7037-4B42-869F-B146BCB64D2E", 1.0D, 0));
+         MobEffectList.REGISTRY.a(27, new MinecraftKey("unluck"), (new MobEffectList(true, 12624973)).c("effect.unluck").b(6, 2).a(GenericAttributes.j, "CC5AF142-2BD2-4215-B636-2605AED11727", -1.0D, 0));
++        // CraftBukkit start
++        for (Object effect : REGISTRY) {
++            org.bukkit.potion.PotionEffectType.registerPotionEffectType(new org.bukkit.craftbukkit.potion.CraftPotionEffectType((MobEffectList) effect));
++        }
++        // CraftBukkit end
+     }
+ }

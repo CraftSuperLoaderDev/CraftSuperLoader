@@ -1,0 +1,40 @@
+--- a/net/minecraft/server/EntityShulkerBullet.java
++++ b/net/minecraft/server/EntityShulkerBullet.java
+@@ -46,8 +46,29 @@
+         this.target = entity;
+         this.c = EnumDirection.UP;
+         this.a(enumdirection_enumaxis);
++        projectileSource = (org.bukkit.entity.LivingEntity) entityliving.getBukkitEntity(); // CraftBukkit
+     }
+ 
++    // CraftBukkit start
++    public EntityLiving getShooter() {
++        return this.shooter;
++    }
++
++    public void setShooter(EntityLiving e) {
++        this.shooter = e;
++    }
++
++    public Entity getTarget() {
++        return this.target;
++    }
++
++    public void setTarget(Entity e) {
++        this.target = e;
++        this.c = EnumDirection.UP;
++        this.a(EnumDirection.EnumAxis.X);
++    }
++    // CraftBukkit end
++
+     protected void b(NBTTagCompound nbttagcompound) {
+         BlockPosition blockposition;
+         NBTTagCompound nbttagcompound1;
+@@ -287,6 +308,7 @@
+     }
+ 
+     protected void a(MovingObjectPosition movingobjectposition) {
++        org.bukkit.craftbukkit.event.CraftEventFactory.callProjectileHitEvent(this, movingobjectposition); // Craftbukkit - Call event
+         if (movingobjectposition.entity == null) {
+             ((WorldServer) this.world).a(EnumParticle.EXPLOSION_LARGE, this.locX, this.locY, this.locZ, 2, 0.2D, 0.2D, 0.2D, 0.0D, new int[0]);
+             this.a(SoundEffects.gD, 1.0F, 1.0F);
