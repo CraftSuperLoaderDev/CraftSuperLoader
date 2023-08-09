@@ -1,0 +1,13 @@
+--- a/net/minecraft/server/EntityMinecartMobSpawner.java
++++ b/net/minecraft/server/EntityMinecartMobSpawner.java
+@@ -63,4 +63,10 @@
+         super.B_();
+         this.a.c();
+     }
++
++    // CraftBukkit start
++    public boolean bC() {
++        return true;
++    }
++    // CraftBukkit end
+ }

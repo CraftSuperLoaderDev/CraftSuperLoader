@@ -1,0 +1,36 @@
+--- a/net/minecraft/server/EntityAnimal.java
++++ b/net/minecraft/server/EntityAnimal.java
+@@ -8,6 +8,7 @@
+     protected Block bA;
+     private int bx;
+     private UUID by;
++    public ItemStack breedItem; // CraftBukkit - Add breedItem variable
+ 
+     public EntityAnimal(World world) {
+         super(world);
+@@ -41,6 +42,9 @@
+ 
+     }
+ 
++    /* CraftBukkit start
++    // Function disabled as it has no special function anymore after
++    // setSitting is disabled.
+     public boolean damageEntity(DamageSource damagesource, float f) {
+         if (this.isInvulnerable(damagesource)) {
+             return false;
+@@ -49,6 +53,7 @@
+             return super.damageEntity(damagesource, f);
+         }
+     }
++    // CraftBukkit end */
+ 
+     public float a(BlockPosition blockposition) {
+         return this.world.getType(blockposition.down()).getBlock() == this.bA ? 10.0F : this.world.n(blockposition) - 0.5F;
+@@ -130,6 +135,7 @@
+         if (entityhuman != null) {
+             this.by = entityhuman.getUniqueID();
+         }
++        this.breedItem = entityhuman.inventory.getItemInHand(); // CraftBukkit
+ 
+         this.world.broadcastEntityEffect(this, (byte) 18);
+     }
